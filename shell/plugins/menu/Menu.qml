@@ -112,7 +112,7 @@ Item {
   // a picked row awaiting the caller's confirm prompt in select mode.
   property bool confirmOpen: false
   property var confirmTarget: null
-  onOpenedChanged: if (!opened) { confirmOpen = false; confirmTarget = null }
+  onOpenedChanged: if (!opened) dropConfirm()
   // Bound to the central [menu] section in shell.toml via Commons.Color.qml.
   // Each color already includes its alpha companion (composed in the
   // singleton), so consumers can drop them straight into a Rectangle.
@@ -663,11 +663,11 @@ Item {
       // and returns with the selection as a stable key for same-named rows.
       var parts = String(root.dmenuOptions[i] || "").split("\t")
       var icon = parts.length > 1 ? parts.shift() : ""
-      var appIcon = root.dmenuMultiple ? "" : root.dmenuAppIcon(icon)
       var label = parts.shift() || ""
       var detail = parts.join("\t")
       if (query && label.toLowerCase().indexOf(query) < 0
           && detail.toLowerCase().indexOf(query) < 0) continue
+      var appIcon = root.dmenuMultiple ? "" : root.dmenuAppIcon(icon)
       displayModel.append({
         itemId: "dmenu." + i,
         disabled: false,
@@ -700,13 +700,14 @@ Item {
   }
 
   // An "app:<name>" icon field shows an installed app's own icon instead of a
-  // glyph. The name is a desktop entry id or a window class, matched the way
-  // the dock matches windows to apps; anything else is taken as an icon name
-  // or path, and an unknown one gets the generic application icon.
+  // glyph. The name is a desktop entry id or a window class, matched by the
+  // app library the way the dock matches windows to apps; anything else is
+  // taken as an icon name or path, and an unknown one gets the generic
+  // application icon.
   function dmenuAppIcon(icon) {
     var name = MenuModel.dmenuAppName(icon)
     if (name === null) return ""
-    var entry = name ? DesktopEntries.heuristicLookup(name) : null
+    var entry = !name ? null : (root.appLibrary ? root.appLibrary.entryForAppId(name) : DesktopEntries.heuristicLookup(name))
     return entry && entry.icon ? String(entry.icon) : (name || "application-x-executable")
   }
 
@@ -931,25 +932,30 @@ Item {
     root.requestConfirm({ appId: row.appId, label: row.label }, 1)
   }
 
+  // A confirmation belongs to the request it was asked in.
   function requestConfirm(target, focusIndex) {
+    target.serial = root.requestSerial
     root.confirmTarget = target
     confirmDialog.selectedIndex = focusIndex
     root.confirmOpen = true
   }
 
-  // Backing out of a confirmation returns to the list, not out of the menu.
-  function cancelConfirm() {
+  function dropConfirm() {
     root.confirmOpen = false
     root.confirmTarget = null
+  }
+
+  // Backing out of a confirmation returns to the list, not out of the menu.
+  function cancelConfirm() {
+    root.dropConfirm()
     root.disarmPointer()
     Qt.callLater(function() { filterInput.forceActiveFocus() })
   }
 
   function acceptConfirm() {
     var target = root.confirmTarget
-    root.confirmOpen = false
-    root.confirmTarget = null
-    if (!target) return
+    root.dropConfirm()
+    if (!target || target.serial !== root.requestSerial) return
     if (root.dmenuActive) {
       root.applyDmenuSelection(target.value)
       return
@@ -982,6 +988,7 @@ Item {
 
   function openExistingMenu(initialMenu) {
     requestSerial += 1
+    root.dropConfirm()
     mode = "menu"
     requestActive = false
     selectionFile = ""
@@ -1006,6 +1013,8 @@ Item {
 
   function openDmenu(payload) {
     requestSerial += 1
+    // A new request replaces the old one whole, prompt included.
+    root.dropConfirm()
     mode = payload.mode === "input" ? "input" : "select"
     dmenuPrompt = String(payload.prompt || (mode === "input" ? Commons.I18n.t("menu.inputPrompt") : Commons.I18n.t("menu.selectPrompt")))
     dmenuOptions = Array.isArray(payload.options) ? payload.options : []
@@ -1331,9 +1340,11 @@ Item {
       color: root.scrim
     }
 
+    // A click past the card closes the menu, or backs out of an open
+    // confirmation to the list, like any click outside the prompt.
     MouseArea {
       anchors.fill: parent
-      onClicked: root.cancel()
+      onClicked: root.confirmOpen ? root.cancelConfirm() : root.cancel()
     }
 
     BorderSurface {

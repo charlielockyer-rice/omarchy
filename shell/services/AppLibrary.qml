@@ -71,6 +71,29 @@ Item {
     return AppSearch.sortedEntries(values, query, function(entry) { return root.isHiddenEntry(entry) })
   }
 
+  // Entries that can claim a terminal app's window: those run in a terminal,
+  // and those that hand the terminal an app id of their own.
+  readonly property var terminalEntries: {
+    var values = DesktopEntries.applications.values
+    var out = []
+    for (var i = 0; i < values.length; i++) {
+      var entry = values[i]
+      if (entry.runInTerminal || String(entry.execString || "").indexOf("--app-id=") >= 0)
+        out.push({ id: entry.id, execString: entry.execString, command: entry.command, runInTerminal: entry.runInTerminal })
+    }
+    return out
+  }
+
+  // The desktop entry an app id (a window class) belongs to, as the dock
+  // matches its windows: Quickshell's own lookup, then the terminal entry that
+  // launched it (org.omarchy.nvim is Neovim, TUI.tile is Docker).
+  function entryForAppId(appId) {
+    var entry = DesktopEntries.heuristicLookup(appId)
+    if (entry) return entry
+    var id = AppSearch.claimingEntryId(appId, root.terminalEntries)
+    return id ? DesktopEntries.byId(id) : null
+  }
+
   function iconSource(icon) {
     var value = String(icon || "")
     if (value.length === 0) return Quickshell.iconPath("application-x-executable", true)

@@ -11,6 +11,7 @@ QtObject {
   property var _entryName: null
   property var _entrySubtext: null
   property var _sortedEntries: null
+  property var _entryForAppId: null
   property var _iconSource: null
   property var _refreshIcons: null
   property var _launch: null
@@ -26,6 +27,10 @@ QtObject {
 
   function sortedEntries(query) {
     return _sortedEntries ? _sortedEntries(String(query || "")) : []
+  }
+
+  function entryForAppId(appId) {
+    return _entryForAppId ? _entryForAppId(String(appId || "")) : null
   }
 
   function iconSource(icon) {

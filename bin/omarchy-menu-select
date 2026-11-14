@@ -16,7 +16,8 @@
 
 # --confirm asks before a pick returns, in the same menu: the message (%1 is
 # the picked label) with Cancel focused and a button named by --confirm-label.
-# Cancel or Escape goes back to the list. It cannot be combined with --multiple.
+# Cancel, Escape or a click outside it goes back to the list. It cannot be
+# combined with --multiple.
 
 # With --multiple, clicking/Enter toggles rows and Apply returns a JSON array.
 # --on-change takes a JSON command array; each toggle runs it with the selection

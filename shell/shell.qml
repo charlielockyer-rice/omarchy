@@ -444,6 +444,7 @@ ShellRoot {
       _entryName: function(entry) { return shell.appLibrary.entryName(entry) },
       _entrySubtext: function(entry) { return shell.appLibrary.entrySubtext(entry) },
       _sortedEntries: function(query) { return shell.appLibrary.sortedEntries(query) },
+      _entryForAppId: function(appId) { return shell.appLibrary.entryForAppId(appId) },
       _iconSource: function(icon) { return shell.appLibrary.iconSource(icon) },
       _refreshIcons: function() { shell.appLibrary.refreshIcons() },
       _launch: function(desktopId, name) { shell.appLibrary.launch(desktopId, name) },

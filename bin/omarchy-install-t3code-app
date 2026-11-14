@@ -97,8 +97,12 @@ fi
 # Exec expands %-field codes, so a literal % in the path is written as %%.
 exec_path=${APPIMAGE//%/%%}
 mkdir -p "$(dirname "$DESKTOP_FILE")"
+# The app names its windows com.t3tools.T3Code, but older releases give
+# the launcher the class t3code (fixed upstream in pingdotgg/t3code#10895),
+# which leaves the dock unable to match them.
 sed -e "s|^Exec=.*|Exec=\"$exec_path\" %U\nTryExec=$APPIMAGE|" -e "s|^Name=.*|Name=$name|" \
-  -e '/^X-AppImage-Version=/d' "$work/squashfs-root/t3code.desktop" >"$work/t3code.desktop"
+  -e '/^X-AppImage-Version=/d' -e '/^StartupWMClass=/d' -e 's|^\[Desktop Entry\]$|&\nStartupWMClass=com.t3tools.T3Code|' \
+  "$work/squashfs-root/t3code.desktop" >"$work/t3code.desktop"
 install -Dm755 "$work/t3code.desktop" "$DESKTOP_FILE"
 update-desktop-database "$HOME/.local/share/applications"
 

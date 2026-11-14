@@ -127,7 +127,8 @@ grep -qx "Exec=\"$appimage\" %U" "$desktop" || fail "the launcher runs the AppIm
 grep -qx "TryExec=$appimage" "$desktop" || fail "the launcher hides once the AppImage is gone"
 grep -qx 'Name=T3 Code' "$desktop" || fail "the launcher is named T3 Code"
 grep -qx 'MimeType=x-scheme-handler/t3code;' "$desktop" || fail "the launcher keeps upstream's link handler"
-grep -qx 'StartupWMClass=t3code' "$desktop" || fail "the launcher matches the app's windows"
+[[ $(grep '^StartupWMClass=' "$desktop") == "StartupWMClass=com.t3tools.T3Code" ]] ||
+  fail "the launcher matches the app's windows, even from a release that names them t3code" "$(cat "$desktop")"
 ! grep -q '^X-AppImage-Version=' "$desktop" || fail "the launcher drops the pinned AppImage version"
 [[ -f $home/.local/share/icons/hicolor/512x512/apps/t3code.png ]] || fail "the app's icons are installed"
 pass "the launcher entry and icons come from upstream's entry in the AppImage"

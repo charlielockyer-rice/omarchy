@@ -423,4 +423,41 @@ const missingGlyphs = fontGlyphRows
   .filter(({ code }) => !fontRanges.some(([start, end = start]) => code >= start && code <= end))
   .map(({ id, code }) => `${id} U+${code.toString(16)}`)
 assertDeepEqual(missingGlyphs, [], 'every menu glyph drawn in the Omarchy font is one the font carries')
+
+assertEqual(menu.dmenuAppName('app:chrome-web.whatsapp.com__-Default'), 'chrome-web.whatsapp.com__-Default', 'select asks for an app icon by window class or desktop id')
+assertEqual(menu.dmenuAppName('\uf268'), null, 'select keeps a glyph icon a glyph')
+assertEqual(menu.dmenuAppName('app:'), '', 'select gives an unnamed app icon the generic icon')
+assertEqual(menu.dmenuValue('app:firefox\tFirefox'), 'Firefox', 'select never returns an app icon with the pick')
 JS
+
+require_command jq
+
+SELECT_TMP=$(mktemp -d)
+trap 'rm -rf "$SELECT_TMP"' EXIT
+
+# Stands in for the shell: keeps the summon payload and answers the request.
+cat >"$SELECT_TMP/omarchy-shell" <<'STUB'
+#!/bin/bash
+printf '%s' "$4" >"$PAYLOAD"
+printf 'Firefox\n' >"$(jq -r .selectionFile <<<"$4")"
+: >"$(jq -r .doneFile <<<"$4")"
+STUB
+chmod +x "$SELECT_TMP/omarchy-shell"
+
+select_payload() {
+  PATH="$SELECT_TMP:$PATH" PAYLOAD="$SELECT_TMP/payload" "$ROOT/bin/omarchy-menu-select" "$@" >/dev/null
+  cat "$SELECT_TMP/payload"
+}
+
+payload=$(select_payload "Force Quit" $'app:firefox\tFirefox' -- --confirm "Force quit %1?" --confirm-label "Force Quit" --width 520)
+if jq -e '.confirm == "Force quit %1?" and .confirmLabel == "Force Quit" and .width == 520 and .options == ["app:firefox\tFirefox"]' <<<"$payload" >/dev/null; then
+  pass "menu select passes its confirm prompt to the menu"
+else
+  fail "menu select passes its confirm prompt to the menu" "$payload"
+fi
+
+if PATH="$SELECT_TMP:$PATH" PAYLOAD="$SELECT_TMP/payload" "$ROOT/bin/omarchy-menu-select" "Pick" a b -- --multiple --confirm "Sure?" >/dev/null 2>&1; then
+  fail "menu select rejects --confirm with --multiple"
+else
+  pass "menu select rejects --confirm with --multiple"
+fi

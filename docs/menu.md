@@ -178,9 +178,12 @@ renders under the label, filters with it, and comes back as
 how the pickers behind menu actions (`omarchy-menu-plugin`,
 `omarchy-menu-timezone`, ...) present lists without owning any UI.
 
+An icon written `app:<name>` shows an installed app's own icon instead of a glyph, drawn like the rows of the Apps menu: the name is a desktop entry id or a window class, matched to an app the way the dock matches windows (so `app:chrome-web.whatsapp.com__-Default` finds the WhatsApp web app), and otherwise taken as an icon name or path. A multi-select keeps its check marks in that column, so it ignores `app:` icons.
 
 Pass `-- --multiple` to `omarchy-menu-select` for a multi-select request. Repeat `--selected <value>` to preselect returned values (labels plus any subtext, without icons). Clicking or pressing Enter toggles an option without closing the menu; Apply returns a JSON array in option order, including `[]` when all choices are deselected. Cancellation still exits 1. Selections survive filtering.
 
 With `--on-change <JSON command array>`, each toggle runs that command with the proposed selection JSON appended as its final argument, and no Apply row is shown. The checkbox changes only after the command succeeds; a failed command retains the previous selection. Changes persist when the menu closes. The typing selectors use this mode.
 
 For immediate multi-select requests, `--change-key <key>` identifies the setting being changed across picker openings. The menu keeps queued selections for that key when reopened, so a new toggle cannot discard a change still being saved. Without a key, the command array identifies the setting.
+
+Pass `-- --confirm <message>` to ask before a pick returns, without closing the menu: choosing a row opens a Cancel/Confirm prompt over the list, with `%1` in the message replaced by the row's label, Cancel focused, and the confirm button named by `--confirm-label` (default "Confirm"). Cancel, Escape, or a click outside the prompt goes back to the list with the search kept, and Escape again closes the menu as usual. The prompt is the same one the Apps menu uses to confirm an uninstall. `--confirm` is for single picks and is rejected with `--multiple`.

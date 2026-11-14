@@ -40,6 +40,8 @@ Item {
   }
 
   visible: opened
+  // The prompt card's own height, so a short host can grow to hold it.
+  implicitHeight: card.height
 
   Rectangle {
     anchors.fill: parent

@@ -81,6 +81,9 @@ Item {
   property var dmenuSaved: []
   property string dmenuChangeKey: ""
   property var dmenuOnChange: []
+  // With a confirm prompt, a pick asks before it returns; %1 is the row's label.
+  property string dmenuConfirm: ""
+  property string dmenuConfirmLabel: ""
   property string selectionFile: ""
   property string doneFile: ""
   property int dmenuWidth: 300
@@ -105,9 +108,11 @@ Item {
   // Shared application engine (entries, hidden filters, icons, launch,
   // removal), owned by the shell and also used by the standalone launcher.
   readonly property var appLibrary: root.shell ? root.shell.appLibrary : null
-  property bool deleteConfirmOpen: false
-  property var deleteTarget: null
-  onOpenedChanged: if (!opened) { deleteConfirmOpen = false; deleteTarget = null }
+  // What the confirmation is asking about: an app to uninstall in the menu, or
+  // a picked row awaiting the caller's confirm prompt in select mode.
+  property bool confirmOpen: false
+  property var confirmTarget: null
+  onOpenedChanged: if (!opened) { confirmOpen = false; confirmTarget = null }
   // Bound to the central [menu] section in shell.toml via Commons.Color.qml.
   // Each color already includes its alpha companion (composed in the
   // singleton), so consumers can drop them straight into a Rectangle.
@@ -137,9 +142,11 @@ Item {
   property int layoutSerial: 0
   property int cardWidth: Math.min(root.dmenuActive ? Style.space(root.dmenuWidth) : ((root.activeMenu === "trigger.capture.screenrecord" || root.activeMenu === "appearance.font" || root.activeMenu === "update.kernel") ? Style.space(520) : Style.space(300)), panel.width - Style.gapsOut * 2)
   property int visibleRowsHeight: root.dmenuActive ? dmenuRowListHeight(layoutSerial, displayModel.count, filterText) : rowListHeight(layoutSerial, displayModel.count, filterText, searchDivider)
-  property int cardHeight: root.dmenuActive
-    ? Math.min(contentMargin * 2 + headerHeight + (mode === "input" ? 0 : contentSpacing + visibleRowsHeight), panel.height - Style.gapsOut * 2)
-    : Math.min(contentMargin * 2 + headerHeight + contentSpacing + visibleRowsHeight, panel.height - Style.gapsOut * 2)
+  property int cardHeight: Math.min(Math.max(root.dmenuActive
+    ? contentMargin * 2 + headerHeight + (mode === "input" ? 0 : contentSpacing + visibleRowsHeight)
+    : contentMargin * 2 + headerHeight + contentSpacing + visibleRowsHeight,
+    // A short list grows while a confirmation is open so the prompt fits inside it.
+    confirmOpen ? confirmDialog.implicitHeight + contentMargin * 2 : 0), panel.height - Style.gapsOut * 2)
 
   function finishRequest(selection) {
     if (!root.requestActive || !root.doneFile) {
@@ -656,6 +663,7 @@ Item {
       // and returns with the selection as a stable key for same-named rows.
       var parts = String(root.dmenuOptions[i] || "").split("\t")
       var icon = parts.length > 1 ? parts.shift() : ""
+      var appIcon = root.dmenuMultiple ? "" : root.dmenuAppIcon(icon)
       var label = parts.shift() || ""
       var detail = parts.join("\t")
       if (query && label.toLowerCase().indexOf(query) < 0
@@ -664,9 +672,9 @@ Item {
         itemId: "dmenu." + i,
         disabled: false,
         kind: "dmenu",
-        icon: root.dmenuMultiple ? (root.dmenuSelected.indexOf(MenuModel.dmenuValue(root.dmenuOptions[i])) !== -1 ? "✓" : "○") : icon,
+        icon: root.dmenuMultiple ? (root.dmenuSelected.indexOf(MenuModel.dmenuValue(root.dmenuOptions[i])) !== -1 ? "✓" : "○") : (appIcon ? "" : icon),
         iconFont: "",
-        appIcon: "",
+        appIcon: appIcon,
         appId: "",
         label: label,
         target: "",
@@ -689,6 +697,17 @@ Item {
     Qt.callLater(function() {
       if (displayModel.count > 0) root.revealCursor()
     })
+  }
+
+  // An "app:<name>" icon field shows an installed app's own icon instead of a
+  // glyph. The name is a desktop entry id or a window class, matched the way
+  // the dock matches windows to apps; anything else is taken as an icon name
+  // or path, and an unknown one gets the generic application icon.
+  function dmenuAppIcon(icon) {
+    var name = MenuModel.dmenuAppName(icon)
+    if (name === null) return ""
+    var entry = name ? DesktopEntries.heuristicLookup(name) : null
+    return entry && entry.icon ? String(entry.icon) : (name || "application-x-executable")
   }
 
   function updateDmenuChecks() {
@@ -858,7 +877,7 @@ Item {
   }
 
   function activateIndex(index, fromPointer) {
-    if (root.deleteConfirmOpen) return
+    if (root.confirmOpen) return
     if (root.dmenuActive) {
       if (root.mode === "input") {
         root.applyDmenuSelection(root.filterText)
@@ -880,7 +899,10 @@ Item {
           }
         }
       } else {
-        root.applyDmenuSelection(picked.detail ? picked.label + "\t" + picked.detail : picked.label)
+        var choice = picked.detail ? picked.label + "\t" + picked.detail : picked.label
+        // Cancel starts focused: a confirm prompt guards something worth a second look.
+        if (root.dmenuConfirm) root.requestConfirm({ value: choice, label: picked.label }, 0)
+        else root.applyDmenuSelection(choice)
       }
       return
     }
@@ -906,24 +928,32 @@ Item {
     if (!root.cursorActive || root.selectedIndex < 0 || root.selectedIndex >= displayModel.count) return
     var row = displayModel.get(root.selectedIndex)
     if (!row || row.kind !== "app") return
-    root.deleteTarget = { appId: row.appId, label: row.label }
-    deleteConfirm.selectedIndex = 1
-    root.deleteConfirmOpen = true
+    root.requestConfirm({ appId: row.appId, label: row.label }, 1)
   }
 
-  function cancelDelete() {
-    root.deleteConfirmOpen = false
-    root.deleteTarget = null
-    deleteConfirm.selectedIndex = 1
+  function requestConfirm(target, focusIndex) {
+    root.confirmTarget = target
+    confirmDialog.selectedIndex = focusIndex
+    root.confirmOpen = true
+  }
+
+  // Backing out of a confirmation returns to the list, not out of the menu.
+  function cancelConfirm() {
+    root.confirmOpen = false
+    root.confirmTarget = null
     root.disarmPointer()
     Qt.callLater(function() { filterInput.forceActiveFocus() })
   }
 
-  function confirmDelete() {
-    var target = root.deleteTarget
-    root.deleteConfirmOpen = false
-    root.deleteTarget = null
+  function acceptConfirm() {
+    var target = root.confirmTarget
+    root.confirmOpen = false
+    root.confirmTarget = null
     if (!target) return
+    if (root.dmenuActive) {
+      root.applyDmenuSelection(target.value)
+      return
+    }
     root.cancel()
     if (root.appLibrary) root.appLibrary.remove(target.appId, target.label)
   }
@@ -983,6 +1013,8 @@ Item {
     dmenuOnChange = dmenuMultiple && Array.isArray(payload.onChange)
       && payload.onChange.every(function(arg) { return typeof arg === "string" }) ? payload.onChange : []
     dmenuChangeKey = String(payload.changeKey || JSON.stringify(dmenuOnChange))
+    dmenuConfirm = mode === "select" && !dmenuMultiple ? String(payload.confirm || "") : ""
+    dmenuConfirmLabel = String(payload.confirmLabel || "")
     dmenuSelected = MenuModel.dmenuSelections(dmenuOptions, Array.isArray(payload.selected) ? payload.selected : [], dmenuOnChange.length > 0)
     dmenuSaved = dmenuSelected
     if (dmenuOnChange.length > 0)
@@ -1320,13 +1352,13 @@ Item {
       Item {
         id: keyCatcher
         anchors.fill: parent
-        z: root.deleteConfirmOpen ? 20 : 0
+        z: root.confirmOpen ? 20 : 0
 
         // Focus is on filterInput, which forwards every key here first.
         Keys.onPressed: function(event) {
-          if (root.deleteConfirmOpen) {
+          if (root.confirmOpen) {
             // Swallow the rest too, or it would type into the search line behind the dialog.
-            deleteConfirm.handleKey(event)
+            confirmDialog.handleKey(event)
             event.accepted = true
             return
           }
@@ -1367,13 +1399,15 @@ Item {
         }
 
         ConfirmDialog {
-          id: deleteConfirm
+          id: confirmDialog
+
+          readonly property string targetLabel: (root.confirmTarget && root.confirmTarget.label) || ""
 
           anchors.fill: parent
-          opened: root.deleteConfirmOpen
+          opened: root.confirmOpen
           z: 10
-          message: Commons.I18n.t("common.uninstallConfirm").arg((root.deleteTarget && root.deleteTarget.label) || "")
-          confirmText: Commons.I18n.t("common.uninstall")
+          message: root.dmenuActive ? root.dmenuConfirm.split("%1").join(confirmDialog.targetLabel) : Commons.I18n.t("common.uninstallConfirm").arg(confirmDialog.targetLabel)
+          confirmText: root.dmenuActive ? (root.dmenuConfirmLabel || Commons.I18n.t("common.confirm")) : Commons.I18n.t("common.uninstall")
           background: root.background
           foreground: root.foreground
           scrim: root.scrim
@@ -1381,8 +1415,8 @@ Item {
           selectedText: root.selectedText
           fontFamily: root.fontFamily
           cornerRadius: root.cornerRadius
-          onCanceled: root.cancelDelete()
-          onConfirmed: root.confirmDelete()
+          onCanceled: root.cancelConfirm()
+          onConfirmed: root.acceptConfirm()
         }
       }
 
@@ -1407,7 +1441,7 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             keyHandler: keyCatcher
             // Input-method commits bypass key handling, so the dialog has to refuse them here.
-            readOnly: root.deleteConfirmOpen
+            readOnly: root.confirmOpen
             color: root.foreground
             font.family: root.fontFamily
             font.pixelSize: Style.font.heading
@@ -1489,7 +1523,8 @@ Item {
               required property bool disabled
 
               readonly property bool hasCursor: root.cursorActive && row.index === root.selectedIndex
-              readonly property bool isApp: row.kind === "app"
+              // App rows in the menu, and select rows given an "app:" icon.
+              readonly property bool isApp: row.kind === "app" || row.appIcon.length > 0
               readonly property bool hasIcon: row.icon.length > 0 || row.isApp
 
               width: ListView.view.width

@@ -239,6 +239,21 @@ hl.window_rule({{ name = "test-window", match = {{ class = "owb-window" }}, floa
     settle()
     print('PASS: an empty workspace that Hyprland destroys on leaving still slides its background out', flush=True)
 
+    # A swipe toward a workspace that does not exist yet, let go short: the
+    # new background slides back out with the workspace, never leaving a gap.
+    swipe('begin()')
+    for step in range(1, 21):
+      swipe(f'update({5 * step})')
+    swipe('finish()')
+    time.sleep(SLIDE_SECONDS / 3)
+    frame = Frame('swipe-new-cancelled-sliding-back')
+    top = frame.row(gap // 2)
+    assert kinds(top) == ['ws2', 'ws3'], runs(top)
+    assert abs(edge(frame.row(frame.height // 2), 'window', 'ws2') - (edge(top, 'ws2', 'ws3') - gap)) <= 2
+    settle()
+    assert json.loads(ctl('activeworkspace', '-j'))['id'] == 2
+    print('PASS: a swipe let go short slides the new background back out with its workspace', flush=True)
+
     # A swipe: the background tracks the fingers, toward a workspace that does
     # not exist yet, and back.
     swipe('begin()')
@@ -257,6 +272,14 @@ hl.window_rule({{ name = "test-window", match = {{ class = "owb-window" }}, floa
     expected = frame.width * (1 - 200 / 300)
     assert abs(second - expected) <= 3 and second < first, (first, second, expected)
     swipe('finish()')
+    # Hyprland creates the new workspace already in place; its background must
+    # still ride in beside the one leaving.
+    time.sleep(SLIDE_SECONDS / 4)
+    frame = Frame('swipe-committed-sliding')
+    top = frame.row(gap // 2)
+    assert kinds(top) == ['ws2', 'ws3'], runs(top)
+    assert edge(top, 'ws2', 'ws3') < second
+    assert abs(edge(frame.row(frame.height // 2), 'window', 'ws2') - (edge(top, 'ws2', 'ws3') - gap)) <= 2
     settle()
     frame = Frame('swipe-committed')
     assert kinds(frame.row(frame.height // 2)) == ['ws3'], runs(frame.row(frame.height // 2))
@@ -276,6 +299,20 @@ hl.window_rule({{ name = "test-window", match = {{ class = "owb-window" }}, floa
     frame = Frame('swipe-cancelled')
     assert kinds(frame.row(frame.height // 2)) == ['ws3']
     print('PASS: a short swipe peeks at the neighbour and settles back', flush=True)
+
+    # In a fade style the background of an empty workspace being left fades
+    # out where it is instead of sliding off at full strength.
+    ctl('eval', f'hl.animation({{ leaf = "workspaces", enabled = true, speed = {SLIDE_SECONDS * 10}, bezier = "linear", style = "slidefade 50%" }})')
+    go(2)
+    time.sleep(SLIDE_SECONDS / 2)
+    frame = Frame('slidefade-leaving-empty')
+    # Workspace 2 arrives from the left, so the right edge shows only the
+    # background being left, half faded over the background layer.
+    pixel = frame.at(frame.width - frame.width // 20, gap // 2)
+    assert all(min(b, c) + 8 < p < max(b, c) - 8 for p, b, c in zip(pixel, BASE, COLORS[3]) if abs(b - c) > 40), pixel
+    settle()
+    ctl('eval', f'hl.animation({{ leaf = "workspaces", enabled = true, speed = {SLIDE_SECONDS * 10}, bezier = "linear", style = "slide" }})')
+    print(f'PASS: in a fade style the background being left fades out in place ({pixel})', flush=True)
 
     # A workspace without an assignment shows the ordinary background layer.
     go(4)
@@ -326,7 +363,7 @@ hl.window_rule({{ name = "test-window", match = {{ class = "owb-window" }}, floa
     frame = Frame('same-path-after')
     assert kinds(frame.row(frame.height // 2)) == ['ws3'], runs(frame.row(frame.height // 2))
     listed = json.loads(ctl('workspacebackgrounds', '-j'))
-    assert listed == [{'workspace': 1, 'path': str(same), 'ready': True}], listed
+    assert listed == [{'workspace': 1, 'path': str(same), 'ready': True, 'failed': False}], listed
     print('PASS: a new picture at the same path replaces the old one, and hyprctl lists what each workspace shows', flush=True)
 
     # A file that is not an image leaves the background layer, and no crash.

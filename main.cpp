@@ -101,6 +101,10 @@ namespace {
     std::map<WORKSPACEID, SSlot>     slots;
     std::map<SKey, SP<Render::ITexture>> textures;
     std::set<SKey>                   failed;
+    // Jobs are owned here, on the main thread only: Hyprland's shared
+    // pointers count references without atomics, so the worker is only ever
+    // handed a plain pointer, and inFlight keeps the job alive until the main
+    // thread has finished it. PLUGIN_EXIT joins the worker before freeing any.
     std::map<SKey, SP<SJob>>         inFlight;
     // A finished job's executor is still running the callback that finishes
     // it, so the job is let go of on the next one rather than inside it.
@@ -109,13 +113,20 @@ namespace {
     std::thread                      worker;
     std::mutex                       mutex;
     std::condition_variable          wake;
-    std::deque<SP<SJob>>             queue;
+    std::deque<SJob*>                queue;
     bool                             exiting = false;
 
+    // What each monitor showed last frame, to tell which workspace is being
+    // left and whether a swipe was under way when it was.
     struct STrack {
-      WORKSPACEID active  = WORKSPACE_INVALID;
-      WORKSPACEID leaving = WORKSPACE_INVALID;
+      WORKSPACEID active           = WORKSPACE_INVALID;
+      WORKSPACEID leaving          = WORKSPACE_INVALID;
       Vector2D    side;
+      bool        swiping          = false;
+      bool        leavingFromSwipe = false;
+      WORKSPACEID swipeTarget      = WORKSPACE_INVALID;
+      WORKSPACEID swipeBegin       = WORKSPACE_INVALID;
+      Vector2D    swipeSide;
     };
     std::map<MONITORID, STrack>      tracks;
 
@@ -160,7 +171,7 @@ namespace {
 
   void workerLoop() {
     while (true) {
-      SP<SJob> job;
+      SJob* job = nullptr;
       {
         std::unique_lock lock(g_state->mutex);
         g_state->wake.wait(lock, [] { return g_state->exiting || !g_state->queue.empty(); });
@@ -171,6 +182,7 @@ namespace {
       }
 
       job->result = decode(job->key, job->error);
+      // The last touch: once signalled, the main thread may finish and free it.
       job->done->signal();
     }
   }
@@ -270,7 +282,7 @@ namespace {
         g_state->inFlight[key] = job;
 
         std::scoped_lock lock(g_state->mutex);
-        g_state->queue.push_back(job);
+        g_state->queue.push_back(job.get());
         g_state->wake.notify_one();
       }
     }
@@ -320,14 +332,19 @@ namespace {
   int luaSet(lua_State* L) {
     luaL_checktype(L, 1, LUA_TTABLE);
 
-    std::map<WORKSPACEID, std::string> wanted;
+    // Checked before any C++ object exists: a Lua error unwinds past them.
     lua_pushnil(L);
     while (lua_next(L, 1) != 0) {
       if (!lua_isinteger(L, -2))
         return luaL_error(L, "workspace_backgrounds.set: keys must be workspace ids");
-      if (!lua_isstring(L, -1))
+      if (lua_type(L, -1) != LUA_TSTRING)
         return luaL_error(L, "workspace_backgrounds.set: values must be image paths");
+      lua_pop(L, 1);
+    }
 
+    std::map<WORKSPACEID, std::string> wanted;
+    lua_pushnil(L);
+    while (lua_next(L, 1) != 0) {
       const WORKSPACEID id   = lua_tointeger(L, -2);
       const std::string path = lua_tostring(L, -1);
       if (!path.empty())
@@ -371,21 +388,28 @@ namespace {
     return ws->m_renderOffset->isBeingAnimated() || ws->m_alpha->isBeingAnimated() || ws->m_forceRendering;
   }
 
-  // Hyprland destroys an empty workspace the moment it is left, so there is
-  // nothing left to slide out, but its background still has to. Hyprland
-  // keeps adjacent workspaces one monitor plus `gaps_workspaces` apart, in a
-  // keyboard switch and in a swipe alike, so the one being left sits exactly
-  // that far behind the one arriving, on the side the arriving one came from.
-  void drawLeaving(PHLMONITOR monitor, const PHLWORKSPACE& active) {
+  Vector2D sideOf(const Vector2D& offset) {
+    if (offset == Vector2D{})
+      return {};
+    return std::abs(offset.x) >= std::abs(offset.y) ? Vector2D{offset.x > 0 ? 1.0 : -1.0, 0.0} : Vector2D{0.0, offset.y > 0 ? 1.0 : -1.0};
+  }
+
+  // How far apart a swipe keeps adjacent workspaces: one monitor plus
+  // `gaps_workspaces`, whatever the switch style.
+  Vector2D swipeDistance(PHLMONITOR monitor) {
     static auto PWORKSPACEGAP = CConfigValue<Config::INTEGER>("general:gaps_workspaces");
+    return monitor->m_size + Vector2D{(double)*PWORKSPACEGAP, (double)*PWORKSPACEGAP};
+  }
 
-    auto& track = g_state->tracks[monitor->m_id];
-    if (track.active != active->m_id) {
-      track.leaving = track.active;
-      track.active  = active->m_id;
-      track.side    = {};
-    }
-
+  // Hyprland destroys an empty workspace the moment it is left, so there is
+  // nothing left to slide out, but its background still has to.
+  //
+  // In a keyboard switch the two workspaces animate with the same curve, the
+  // one leaving from where it was to where the arriving one started, so it
+  // sits behind the arriving one by exactly the distance that one started
+  // from, in every slide and fade style. After a swipe both continue from
+  // where the fingers left them, one swipe distance apart.
+  void drawLeaving(PHLMONITOR monitor, const PHLWORKSPACE& active, SState::STrack& track) {
     if (track.leaving == WORKSPACE_INVALID)
       return;
 
@@ -402,46 +426,76 @@ namespace {
     if (!slot)
       return;
 
-    // The side is fixed on the first frame that has one, so a spring curve
-    // overshooting zero cannot flip it.
     const auto offset = active->m_renderOffset->value();
-    if (track.side == Vector2D{} && offset != Vector2D{})
-      track.side = std::abs(offset.x) >= std::abs(offset.y) ? Vector2D{offset.x > 0 ? 1.0 : -1.0, 0.0} : Vector2D{0.0, offset.y > 0 ? 1.0 : -1.0};
+    if (track.leavingFromSwipe) {
+      // Fixed on the first frame that has one, so a spring curve overshooting
+      // zero cannot flip it.
+      if (track.side == Vector2D{})
+        track.side = sideOf(offset);
+      drawSlot(monitor, *slot, offset - track.side * swipeDistance(monitor), 1.F);
+      return;
+    }
 
-    const auto distance = monitor->m_size + Vector2D{(double)*PWORKSPACEGAP, (double)*PWORKSPACEGAP};
-    drawSlot(monitor, *slot, offset - track.side * distance, 1.F);
+    const float alpha = active->m_alpha->isBeingAnimated() ? 1.F - active->m_alpha->value() : 1.F;
+    drawSlot(monitor, *slot, offset - active->m_renderOffset->begun(), alpha);
   }
 
   // A swipe toward a workspace that does not exist yet moves the current one
   // over empty space, and Hyprland creates the new workspace only when the
   // fingers lift. Its background is drawn where that workspace will be,
-  // found the way Hyprland will find it, so it follows the fingers too.
-  void drawSwipeTarget(PHLMONITOR monitor, const PHLWORKSPACE& active) {
-    static auto PWORKSPACEGAP = CConfigValue<Config::INTEGER>("general:gaps_workspaces");
-    static auto PSWIPENEW     = CConfigValue<Config::INTEGER>("gestures:workspace_swipe_create_new");
-    static auto PSWIPEUSER    = CConfigValue<Config::INTEGER>("gestures:workspace_swipe_use_r");
+  // found the way Hyprland will find it, so it follows the fingers too, and
+  // slides back out with the current workspace when the swipe is let go short.
+  void drawSwipeTarget(PHLMONITOR monitor, const PHLWORKSPACE& active, SState::STrack& track, bool swiping) {
+    static auto PSWIPENEW  = CConfigValue<Config::INTEGER>("gestures:workspace_swipe_create_new");
+    static auto PSWIPEUSER = CConfigValue<Config::INTEGER>("gestures:workspace_swipe_use_r");
 
-    if (!active->m_forceRendering || !g_pUnifiedWorkspaceSwipe->isGestureInProgress() || Desktop::focusState()->monitor() != monitor)
+    const auto  offset = active->m_renderOffset->value();
+
+    if (swiping) {
+      track.swipeTarget = WORKSPACE_INVALID;
+      const auto side   = sideOf(offset);
+      if (side == Vector2D{})
+        return;
+
+      const bool  toRight = side.x + side.y < 0;
+      WORKSPACEID target  = getWorkspaceIDNameFromString(toRight ? (*PSWIPEUSER ? "r+1" : "m+1") : (*PSWIPEUSER ? "r-1" : "m-1")).id;
+      if (toRight && *PSWIPENEW && target <= active->m_id)
+        target = getWorkspaceIDNameFromString("r+1").id;
+
+      if (target == WORKSPACE_INVALID || target == active->m_id || State::workspaceState()->query().id(target).run())
+        return;
+
+      track.swipeTarget = target;
+      track.swipeBegin  = active->m_id;
+      track.swipeSide   = side;
+    } else if (track.swipeTarget == WORKSPACE_INVALID || track.swipeBegin != active->m_id || !active->m_renderOffset->isBeingAnimated() ||
+               State::workspaceState()->query().id(track.swipeTarget).run()) {
+      track.swipeTarget = WORKSPACE_INVALID;
       return;
-
-    const auto offset = active->m_renderOffset->value();
-    if (offset == Vector2D{})
-      return;
-
-    const Vector2D side = std::abs(offset.x) >= std::abs(offset.y) ? Vector2D{offset.x > 0 ? 1.0 : -1.0, 0.0} : Vector2D{0.0, offset.y > 0 ? 1.0 : -1.0};
-    const bool     toRight = side.x + side.y < 0;
-
-    WORKSPACEID    target = getWorkspaceIDNameFromString(toRight ? (*PSWIPEUSER ? "r+1" : "m+1") : (*PSWIPEUSER ? "r-1" : "m-1")).id;
-    if (toRight && *PSWIPENEW && target <= active->m_id)
-      target = getWorkspaceIDNameFromString("r+1").id;
-
-    if (target == WORKSPACE_INVALID || target == active->m_id || State::workspaceState()->query().id(target).run())
-      return;
-
-    if (const auto slot = slotFor(target)) {
-      const auto distance = monitor->m_size + Vector2D{(double)*PWORKSPACEGAP, (double)*PWORKSPACEGAP};
-      drawSlot(monitor, *slot, offset - side * distance, 1.F);
     }
+
+    if (const auto slot = slotFor(track.swipeTarget))
+      drawSlot(monitor, *slot, offset - track.swipeSide * swipeDistance(monitor), 1.F);
+  }
+
+  // A swipe let go past halfway toward a workspace that did not exist yet
+  // creates it already in place, while the one left slides out over it. The
+  // new background rides in beside the one leaving instead of appearing at once.
+  Vector2D arrivingOffset(PHLMONITOR monitor, const PHLWORKSPACE& active, const SState::STrack& track) {
+    if (!track.leavingFromSwipe || moving(active))
+      return active->m_renderOffset->value();
+
+    for (const auto& workspace : State::workspaceState()->workspaces()) {
+      const auto ws = workspace.lock();
+      if (!ws || ws == active || ws->m_isSpecialWorkspace || ws->m_monitor != monitor || !ws->m_renderOffset->isBeingAnimated())
+        continue;
+
+      const auto side = sideOf(ws->m_renderOffset->goal());
+      if (side != Vector2D{})
+        return ws->m_renderOffset->value() - side * swipeDistance(monitor);
+    }
+
+    return active->m_renderOffset->value();
   }
 
   void onRenderStage(eRenderStage stage) {
@@ -463,9 +517,20 @@ namespace {
       }
     }
 
-    const auto active = monitor->m_activeWorkspace;
-    drawLeaving(monitor, active);
-    drawSwipeTarget(monitor, active);
+    const auto active  = monitor->m_activeWorkspace;
+    const bool swiping = active->m_forceRendering && g_pUnifiedWorkspaceSwipe->isGestureInProgress() && Desktop::focusState()->monitor() == monitor;
+
+    auto&      track = g_state->tracks[monitor->m_id];
+    if (track.active != active->m_id) {
+      track.leaving          = track.active;
+      track.active           = active->m_id;
+      track.side             = {};
+      track.leavingFromSwipe = track.swiping;
+    }
+    track.swiping = swiping;
+
+    drawLeaving(monitor, active, track);
+    drawSwipeTarget(monitor, active, track, swiping);
 
     // Workspaces on their way in or out, under the active one, so it is drawn
     // over them when the switch style overlaps them.
@@ -479,7 +544,7 @@ namespace {
     }
 
     if (const auto slot = slotFor(active->m_id))
-      drawSlot(monitor, *slot, active->m_renderOffset->value(), active->m_alpha->value());
+      drawSlot(monitor, *slot, arrivingOffset(monitor, active, track), active->m_alpha->value());
   }
 
   std::string jsonString(const std::string& in) {
@@ -501,11 +566,13 @@ namespace {
   std::string hyprctlWorkspaceBackgrounds(eHyprCtlOutputFormat format, std::string) {
     std::string out;
     for (const auto& [id, slot] : g_state->slots) {
-      const bool ready = readyEverywhere(slot.picture);
+      const bool ready  = readyEverywhere(slot.picture);
+      const bool failed = std::ranges::any_of(g_state->failed, [&](const SKey& key) { return key.picture == slot.picture; });
       if (format == eHyprCtlOutputFormat::FORMAT_JSON)
-        out += std::format("{}{{\"workspace\": {}, \"path\": {}, \"ready\": {}}}", out.empty() ? "" : ",\n", id, jsonString(slot.picture.path), ready);
+        out += std::format("{}{{\"workspace\": {}, \"path\": {}, \"ready\": {}, \"failed\": {}}}", out.empty() ? "" : ",\n", id, jsonString(slot.picture.path), ready,
+                           failed);
       else
-        out += std::format("{}\t{}{}\n", id, slot.picture.path, ready ? "" : "\t(loading)");
+        out += std::format("{}\t{}{}\n", id, slot.picture.path, failed ? "\t(unreadable)" : ready ? "" : "\t(loading)");
     }
     return format == eHyprCtlOutputFormat::FORMAT_JSON ? "[\n" + out + "\n]\n" : out;
   }

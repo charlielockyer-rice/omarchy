@@ -323,9 +323,13 @@ hl.window_rule({{ name = "test-window", match = {{ class = "owb-window" }}, floa
 
     # Changing the background of the workspace on screen fades to the new one.
     assign({1: images[1], 2: images[2], 3: images[3], 4: images[4]})
-    time.sleep(.15)
-    frame = Frame('assign-fading')
-    middle = frame.at(frame.width // 2, frame.height // 2)
+    # Decoding comes first; the one-second fade starts once it is done.
+    for _ in range(40):
+      frame = Frame('assign-fading')
+      middle = frame.at(frame.width // 2, frame.height // 2)
+      if not near(middle, BASE):
+        break
+      time.sleep(.05)
     assert not near(middle, BASE) and not near(middle, COLORS[4]), middle
     time.sleep(1.5)
     frame = Frame('assign-faded')

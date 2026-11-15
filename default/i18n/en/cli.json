@@ -396,6 +396,7 @@
   "theme.repoPlaceholder": "Git repo URL (https or git@host:org/repo.git)",
   "theme.workspaceBackgroundsOff": "One background on every workspace",
   "theme.workspaceBackgroundsOn": "Every workspace has its own background",
+  "theme.workspaceBackgroundsStillsOnly": "A workspace's own background has to be a picture. Turn off Workspace Backgrounds to use a video",
   "theme.workspaceBackgroundsUnavailable": "Workspace backgrounds aren't installed for this version of Hyprland yet",
   "themeSync.disabled": "Herdr theme sync disabled",
   "themeSync.enabled": "Herdr theme sync enabled",

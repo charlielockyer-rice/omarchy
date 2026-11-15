@@ -22,17 +22,17 @@ exec 9>"${XDG_RUNTIME_DIR:-/tmp}/omarchy-theme-set.lock"
 flock 9
 
 # With workspace backgrounds on, a background is the focused workspace's own,
-# and Hyprland draws a still there itself. Anything else, a video say, stays
-# the background layer's, which that workspace then shows.
-DRAWN_BY_WORKSPACE=false
+# and Hyprland draws it there itself. Only stills can be: a video or an
+# animated GIF would sit still behind every workspace while the pictures
+# slide, so it is refused rather than half work.
 if omarchy-theme-bg-workspace active; then
-  omarchy-theme-bg-workspace set "$BACKGROUND"
-  if [[ ${BACKGROUND,,} =~ \.(jpe?g|png|webp|bmp|jxl|avif)$ ]]; then
-    DRAWN_BY_WORKSPACE=true
+  if [[ ${BACKGROUND,,} =~ \.(jpe?g|png|webp|bmp|jxl)$ ]]; then
+    omarchy-theme-bg-workspace set "$BACKGROUND"
+  else
+    omarchy-notification-send -g  "$(omarchy-i18n theme.workspaceBackgroundsStillsOnly)"
+    exit 1
   fi
-fi
-
-if [[ $DRAWN_BY_WORKSPACE == "false" ]]; then
+else
   INTRO=$(omarchy-theme-bg-boot-intro --resolve-enabled "$BACKGROUND")
 
   # The shell sequences the change, with the intro or the ordinary transition,

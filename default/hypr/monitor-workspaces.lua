@@ -300,6 +300,24 @@ local function regular(workspace)
   return workspace and not workspace.special and workspace.id > 0
 end
 
+-- The physical monitor a workspace id belongs to and its slot there, plugged
+-- in or not: settings that follow a workspace, such as its background, are
+-- kept by these rather than by the id.
+function M.owner(id)
+  if id < 1 then
+    return nil, nil
+  end
+
+  -- A workspace that joined another monitor's block while its own was
+  -- unplugged still belongs to the monitor and slot it came from.
+  local origin = merged[id]
+  if origin then
+    return origin.identity, (origin.id - 1) % SLOTS + 1
+  end
+
+  return identity_of_block(block_of_id(id)), (id - 1) % SLOTS + 1
+end
+
 -- The workspace id of a slot on a monitor.
 function M.workspace_id(monitor, slot)
   local by_connector = assign(connected())

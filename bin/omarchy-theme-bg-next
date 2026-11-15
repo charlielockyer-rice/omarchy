@@ -14,6 +14,15 @@ mapfile -d '' -t BACKGROUNDS < <(
        -o -iname '*.mp4' -o -iname '*.m4v' -o -iname '*.mov' -o -iname '*.webm' -o -iname '*.mkv' -o -iname '*.avi' \) \
     -print0 2>/dev/null | sort -z
 )
+
+# With workspace backgrounds on, only stills can be a workspace's own.
+if omarchy-theme-bg-workspace active; then
+  WORKSPACE_STILLS=()
+  for background in "${BACKGROUNDS[@]}"; do
+    [[ ${background,,} =~ \.(jpe?g|png|webp|bmp|jxl)$ ]] && WORKSPACE_STILLS+=("$background")
+  done
+  BACKGROUNDS=("${WORKSPACE_STILLS[@]}")
+fi
 TOTAL=${#BACKGROUNDS[@]}
 
 if (( TOTAL == 0 )); then

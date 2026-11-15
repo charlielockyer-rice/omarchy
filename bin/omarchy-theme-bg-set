@@ -21,11 +21,24 @@ fi
 exec 9>"${XDG_RUNTIME_DIR:-/tmp}/omarchy-theme-set.lock"
 flock 9
 
-INTRO=$(omarchy-theme-bg-boot-intro --resolve-enabled "$BACKGROUND")
+# With workspace backgrounds on, a background is the focused workspace's own,
+# and Hyprland draws a still there itself. Anything else, a video say, stays
+# the background layer's, which that workspace then shows.
+DRAWN_BY_WORKSPACE=false
+if omarchy-theme-bg-workspace active; then
+  omarchy-theme-bg-workspace set "$BACKGROUND"
+  if [[ ${BACKGROUND,,} =~ \.(jpe?g|png|webp|bmp|jxl|avif)$ ]]; then
+    DRAWN_BY_WORKSPACE=true
+  fi
+fi
 
-# The shell sequences the change, with the intro or the ordinary transition,
-# and repoints the link itself once nothing on screen can flash.
-if [[ $(omarchy-shell shell switchBackground "$BACKGROUND" "$INTRO" 2>/dev/null) != "ok" ]]; then
-  ln -nsf "$BACKGROUND" "$CURRENT_BACKGROUND_LINK"
-  omarchy-shell -q background set "$BACKGROUND"
+if [[ $DRAWN_BY_WORKSPACE == "false" ]]; then
+  INTRO=$(omarchy-theme-bg-boot-intro --resolve-enabled "$BACKGROUND")
+
+  # The shell sequences the change, with the intro or the ordinary transition,
+  # and repoints the link itself once nothing on screen can flash.
+  if [[ $(omarchy-shell shell switchBackground "$BACKGROUND" "$INTRO" 2>/dev/null) != "ok" ]]; then
+    ln -nsf "$BACKGROUND" "$CURRENT_BACKGROUND_LINK"
+    omarchy-shell -q background set "$BACKGROUND"
+  fi
 fi

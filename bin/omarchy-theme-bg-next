@@ -22,7 +22,11 @@ else
   # The shell knows a selection it has not linked yet, so quick presses each
   # move on from the one before. Without it, the link names the current one.
   # With neither, cycling starts from the first background.
-  CURRENT_BACKGROUND=$(omarchy-shell shell selectedBackground 2>/dev/null)
+  if omarchy-theme-bg-workspace active; then
+    CURRENT_BACKGROUND=$(omarchy-theme-bg-workspace current)
+  else
+    CURRENT_BACKGROUND=$(omarchy-shell shell selectedBackground 2>/dev/null)
+  fi
   if [[ -z $CURRENT_BACKGROUND && -L $CURRENT_BACKGROUND_LINK ]]; then
     CURRENT_BACKGROUND=$(readlink "$CURRENT_BACKGROUND_LINK")
   fi

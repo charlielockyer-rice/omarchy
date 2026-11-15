@@ -444,6 +444,7 @@ if [[ $THEME_HEADLESS != "1" && $OMARCHY_THEME_SKIP_BACKGROUND != "1" ]]; then
     # background's intro like any other background change.
     if [[ $PREVIOUS_THEME_NAME != "$THEME_NAME" || $(readlink "$CURRENT_BACKGROUND_LINK") != "$CHOSEN_THEME_BACKGROUND" ]] &&
       [[ ! -f $HOME/.local/state/omarchy/toggles/background-intros-off ]] &&
+      [[ ! -f $HOME/.local/state/omarchy/toggles/hypr/workspace-backgrounds.lua ]] &&
       [[ $(hyprctl -j getoption animations:enabled 2>/dev/null | jq -r '.bool') == "true" ]]; then
       THEME_BACKGROUND_INTRO=$(omarchy-theme-bg-boot-intro --resolve-only "$STAGED_THEME_BACKGROUND")
     fi

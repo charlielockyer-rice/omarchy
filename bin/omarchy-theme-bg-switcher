@@ -6,7 +6,10 @@
 # omarchy:aliases=omarchy background
 
 theme_name=$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null)
-current_background=$(readlink -f "$HOME/.local/state/omarchy/current/background" 2>/dev/null)
+if omarchy-theme-bg-workspace active; then
+  current_background=$(omarchy-theme-bg-workspace current)
+fi
+current_background=${current_background:-$(readlink -f "$HOME/.local/state/omarchy/current/background" 2>/dev/null)}
 
 omarchy-menu-images \
   --selected "$current_background" \

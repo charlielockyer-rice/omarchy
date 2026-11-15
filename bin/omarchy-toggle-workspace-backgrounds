@@ -1,0 +1,36 @@
+#!/bin/bash
+
+# omarchy:summary=Give every workspace its own background, which moves with it
+# omarchy:args=[toggle|on|off]
+# omarchy:examples=omarchy toggle workspace-backgrounds | omarchy toggle workspace-backgrounds off
+
+case ${1:-toggle} in
+toggle)
+  if omarchy-hyprland-toggle-enabled workspace-backgrounds; then
+    state=off
+  else
+    state=on
+  fi
+  ;;
+on | off) state=$1 ;;
+*)
+  echo "Usage: omarchy-toggle-workspace-backgrounds [toggle|on|off]" >&2
+  exit 1
+  ;;
+esac
+
+omarchy-hyprland-toggle workspace-backgrounds "$state"
+
+# Hyprland refuses a plugin built for another version, so on only counts once
+# it draws.
+if [[ $state == "on" ]] && ! omarchy-theme-bg-workspace active; then
+  omarchy-hyprland-toggle workspace-backgrounds off
+  omarchy-notification-send -g  "$(omarchy-i18n theme.workspaceBackgroundsUnavailable)"
+  exit 1
+fi
+
+if [[ $state == "on" ]]; then
+  omarchy-notification-send -g  "$(omarchy-i18n theme.workspaceBackgroundsOn)"
+else
+  omarchy-notification-send -g  "$(omarchy-i18n theme.workspaceBackgroundsOff)"
+fi

@@ -86,6 +86,12 @@
   "appearance.background": {
     "label": "Background"
   },
+  "appearance.workspace-backgrounds-on": {
+    "label": "Workspace Backgrounds On"
+  },
+  "appearance.workspace-backgrounds-off": {
+    "label": "Workspace Backgrounds Off"
+  },
   "appearance.font": {
     "label": "Font"
   },

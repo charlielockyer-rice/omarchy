@@ -1,0 +1,45 @@
+#!/bin/bash
+
+# omarchy:summary=Show or set the focused workspace's own background, with workspace backgrounds on
+# omarchy:args=active | current | set <path-to-media>
+# omarchy:hidden=true
+
+focused_workspace() {
+  hyprctl activeworkspace -j | jq -r '.id'
+}
+
+case $1 in
+active)
+  # On, and Hyprland drawing them: the plugin is missing, or refused when it
+  # was not rebuilt for the running Hyprland, and then nothing changes.
+  omarchy-hyprland-toggle-enabled workspace-backgrounds &&
+    hyprctl workspacebackgrounds -j 2>/dev/null | jq -e 'type == "array"' >/dev/null 2>&1
+  ;;
+current)
+  # What Hyprland draws on the focused workspace, which is also the pick.
+  hyprctl workspacebackgrounds -j | jq -r --argjson workspace "$(focused_workspace)" '.[] | select(.workspace == $workspace) | .path'
+  ;;
+set)
+  if [[ -z $2 ]]; then
+    echo "Usage: omarchy-theme-bg-workspace set <path-to-media>" >&2
+    exit 1
+  fi
+
+  # Picks are kept per theme, so a theme comes back the way it was left.
+  WORKSPACE=$(focused_workspace)
+  THEME_NAME=$(cat "$HOME/.local/state/omarchy/current/theme.name")
+  PICKS="$HOME/.local/state/omarchy/workspace-backgrounds/$THEME_NAME"
+  mkdir -p "${PICKS%/*}"
+  {
+    grep -v "^$WORKSPACE"$'\t' "$PICKS" 2>/dev/null
+    printf '%s\t%s\n' "$WORKSPACE" "$2"
+  } >"$PICKS.tmp"
+  mv "$PICKS.tmp" "$PICKS"
+
+  hyprctl eval 'require("default.hypr.workspace-backgrounds").apply()' >/dev/null
+  ;;
+*)
+  echo "Usage: omarchy-theme-bg-workspace active | current | set <path-to-media>" >&2
+  exit 1
+  ;;
+esac

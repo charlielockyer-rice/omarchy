@@ -10,6 +10,14 @@ Themes can include a short intro for a still background. For `backgrounds/road.w
 
 Turning off _Appearance > Animations_ also turns off background intros. Omarchy does this by default in a virtual machine. The `omarchy theme bg intro toggle` command can toggle intros separately. Refreshing a theme does not play an intro.
 
+## A background for every workspace
+
+Turn on _Appearance > Workspace Backgrounds On_ (or run `omarchy toggle workspace-backgrounds`) and every workspace gets a background of its own, the way every Space on a Mac has its own desktop picture. Hyprland draws it as part of the workspace, so it changes in the same frame as the windows when you switch. If you turn on Hyprland's workspace slide animation, or a swipe gesture that follows your fingers, the background slides along with the workspace.
+
+Workspace 1 shows the theme's first background, workspace 2 its second, and so on, starting over when the theme runs out. Each monitor's own workspaces 1-10 follow the same order. With it on, picking a background with `Super + Ctrl + W` or cycling with `omarchy theme bg next` changes only the workspace you're on. Those picks are remembered per theme, so switching back to a theme brings its workspaces back the way you left them.
+
+Stills are drawn on each workspace. A workspace given a video shows it behind the windows, but it stays put while you switch rather than sliding with the workspace, and background intros don't play while workspace backgrounds are on. _Appearance > Workspace Backgrounds Off_ goes back to one background everywhere.
+
 You can find a huge collection of cool curated backgrounds in [dharmx/walls](https://github.com/dharmx/walls).
 
 The lock screen shows a still frame of a video background, the same way it shows a still frame of an animated GIF.

@@ -15,25 +15,36 @@ That path is a contract with Omarchy core, as is the interface below. Which pict
 ## Interface
 
 ```lua
-hl.plugin.workspace_backgrounds.set({ [1] = "/path/a.webp", [2] = "/path/b.jpg" })
+hl.plugin.workspace_backgrounds.set({
+  { workspace = 1, path = "/path/a.webp", monitor = "DP-1", preload = true },
+  { workspace = 7, path = "/path/b.jpg",  monitor = "DP-1" },
+})
 ```
 
-Replaces every assignment at once, keyed by workspace id. A workspace left out draws nothing, so the ordinary background layer shows there; an empty table hands every workspace back. Assignments survive config reloads. A picture that changes on a workspace on screen fades in over the old one with Hyprland's `fadeIn` animation, so turning animations off makes it instant like everything else.
+Replaces every assignment at once. The new set is prepared out of sight and swapped in whole once its pictures are ready, never mid-slide, with the workspace on screen fading to its new picture (Hyprland's `fadeIn` animation). A workspace left out draws nothing, so the ordinary background layer shows there; an empty table hands every workspace back. `monitor` says where a workspace that does not exist yet will appear; `preload` keeps its picture on the GPU even then, so switching there is instant. Calling it again with the same set (every config reload) does nothing.
+
+```lua
+hl.plugin.workspace_backgrounds.configure({ budget_mb = 384, cache_mb = 1024, helpers = 2 })
+```
+
+All optional: the texture memory budget, the disk cache cap, how many helper processes run at once, and `cache_dir` / `helper` paths.
 
 ```bash
 hyprctl workspacebackgrounds -j
 ```
 
-Lists each assigned workspace, its picture, whether it is decoded yet, and whether it could not be read, so scripts read what is drawn instead of working it out again. The command only exists while the plugin is loaded, which makes it the check for whether Hyprland is drawing workspace backgrounds at all.
+Each workspace's picture, what it draws now, whether it failed and why, its texture level, and the textures, bytes and budget in use. The command only exists while the plugin is loaded.
 
-## Behavior
+## How it works
 
-- Pictures are decoded on a worker thread, scaled to cover each monitor and cropped to it, so the GPU holds exactly one screen of pixels per distinct picture and monitor size, and a picture of another shape never draws past its workspace's edge mid-slide. Every assigned picture is decoded ahead of time, so a switch to a workspace that does not exist yet still slides its picture in.
-- Hyprland destroys an empty workspace the moment it is left. Its picture still leaves with it: in a keyboard switch both workspaces animate on the same curve, so it sits behind the arriving one by the distance that one started from, faded to match in the fade styles; after a swipe it stays one monitor plus `general:gaps_workspaces` away, as Hyprland keeps swiped workspaces.
-- A swipe toward a workspace that does not exist yet (`gestures:workspace_swipe_create_new`) draws that workspace's picture where Hyprland will create it when the fingers lift, found the way Hyprland finds it. Let go short, it slides back out with the current workspace; let go past halfway, Hyprland creates the workspace already in place, and its picture rides in beside the one leaving rather than appearing at once.
-- A picture is identified by its file as it is now, so a theme switch that puts a different picture at the same path is decoded again.
-- A file that cannot be read keeps the picture the workspace had and logs the error.
-- Special workspaces draw over the workspace below them as usual and get no picture of their own.
+- **No decoding in Hyprland.** `workspace-backgrounds-prepare`, installed next to the plugin, is started per picture and monitor size. It caps its own memory (1 GB data), CPU time and wall time before reading anything, refuses pictures over 100 megapixels or 32768 px a side from the file header before decoding, leaves no core dump, scales the picture to cover the monitor's pixel size (rotation and scale included) and crops the middle, and writes raw pixels to `~/.cache/omarchy/workspace-backgrounds`, named by the picture's path, inode, size and mtime and the output size. The plugin only reads those files, checks their size and header exactly, and uploads them. A picture that breaks a decoder takes down only the helper.
+- **What is on the GPU.** Slots marked `preload` and every workspace that exists, one texture per distinct picture and monitor size, the workspaces on screen first. Textures are opaque and drawn with blending off. Over the budget, the least urgent textures are halved, then quartered, the ones on screen last, rather than left out. An empty workspace outside those is read from the disk cache in the frame it is switched to.
+- **Quiet uploads.** Uploads wait until nothing is sliding, swiping or fading; only a picture about to be on screen without its texture is uploaded at once.
+- **Failure is per picture.** A picture that cannot be prepared keeps the workspace on the picture it had, at whatever size its monitor has now; it is not retried for every size.
+- **Blur.** Hyprland caches a blur of the background for see-through windows and refreshes it only when a background layer changes; the plugin marks it stale whenever what it draws changes, slides included.
+- **Movement.** Drawn right after the background layer at each workspace's render offset. A workspace Hyprland destroys as it is left (it was empty) has its slide copied at the moment the switch starts, so its picture finishes the same slide, also when another switch interrupts it. Swipes, including toward a workspace created on release, follow Hyprland's swipe distance.
+- **Overviews.** A hook on `renderAllClientsForWorkspace` tells the plugin which workspace a frame draws, so overview plugins that draw each workspace into a tile get that workspace's picture.
+- Special workspaces draw over the workspace below them as usual and get no picture of their own. Videos and animated GIFs are not supported.
 
 ## Hyprland ABI
 
@@ -43,7 +54,7 @@ Plugin-owned symbols live in an anonymous namespace and the library is built wit
 
 ## Building
 
-With the Hyprland headers from the `hyprland` package installed:
+With the Hyprland headers from the `hyprland` package installed (builds the plugin and its helper):
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -53,20 +64,12 @@ cmake --build build
 ## Verifying
 
 ```bash
-python3 tools/verify.py build/workspace-backgrounds.so
-python3 tools/verify.py build/workspace-backgrounds.so --scale 2
+python3 tools/verify.py build/workspace-backgrounds.so   # 21 checks, about 2 minutes
+python3 tools/corpus.py build/workspace-backgrounds-prepare
+python3 tools/memory.py build/workspace-backgrounds.so
 ```
 
-The verifier needs a running Hyprland session with exactly one Hyprland instance, plus `foot`, `grim`, `magick`, `g++` and `pkg-config`. It starts a disposable nested Hyprland with its own runtime directory and never loads the candidate library into the parent compositor. Every check reads real frames back:
-
-- repeated load, assign, config reload and unload, and assignments surviving a reload
-- a keyboard switch: in every captured frame the picture's edge and the window on that workspace stay exactly one gap apart while both move
-- leaving an empty workspace that Hyprland destroys, whose picture must still slide out
-- a swipe, through Hyprland's own workspace swipe code (`tools/swipe.cpp`, a test-only plugin, drives it because a nested compositor gets no touchpad): the pictures track the gesture, keep tracking the window while the release animates, both when let go short and when it commits into a workspace created on release, and a slow short swipe settles back
-- the `slidefade` style, where the picture of an empty workspace being left fades out in place
-- a workspace without a picture showing the background layer, a picture fading in over the old one, a wider picture cropped without spilling into the next workspace, a new picture at the same path, an unreadable file, and clearing and unloading
-
-Screenshots go to `~/.cache/omarchy-hyprland-workspace-backgrounds-verification` by default; pass `--artifacts DIR` to change it.
+The checks run in a fully headless Hyprland (`tools/headless.py`): its own runtime, home, state and cache directories, no seat, no parent compositor and no window anywhere, rendering on the GPU through a render node handed to Aquamarine's headless backend by a test-only preload shim. A test-only plugin (`tools/probe.cpp`) drives Hyprland's own swipe code and reads back every rendered frame, so slides and swipes are checked frame by frame: the picture's edge sits exactly at its workspace's render offset and one gap from that workspace's window in every frame. They cover keyboard slides, an emptied workspace sliding out, an interrupted switch, swipes let go short and committed, the slidefade style, a 1 to 4 jump with no blank, fade or upload, a theme switch mid-slide (swapped only after the slide, no upload in motion), a newer set cancelling an older one's helpers, see-through windows with blur on, a second monitor added and removed, a mode change keeping a failed picture's fallback, a rotated monitor, the texture budget, an overview tile, corrupt pictures, and repeated load and unload. `corpus.py` feeds the helper damaged, oversized and hostile files directly.
 
 ## License
 

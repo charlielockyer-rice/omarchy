@@ -473,6 +473,8 @@ namespace {
     const auto start = Clock::now();
     auto       tex   = g_pHyprRenderer->createTexture(Pix::FORMAT, load->pixels.data(), load->size.w * 4, Vector2D{(double)load->size.w, (double)load->size.h}, false, true);
     const auto ms    = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+    // The GPU has it now; the copy in this process goes at once.
+    std::vector<uint8_t>{}.swap(load->pixels);
 
     g_state->lastUploadMs = ms;
     g_state->maxUploadMs  = std::max(g_state->maxUploadMs, ms);

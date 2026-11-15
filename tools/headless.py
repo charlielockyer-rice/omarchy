@@ -41,7 +41,7 @@ def build(out_dir):
 
 
 class Hyprland:
-  def __init__(self, config, workdir, shim, log_name='compositor.log', memory_max='6G'):
+  def __init__(self, config, workdir, shim, log_name='compositor.log', memory_max='6G', env=None):
     self.workdir = Path(workdir)
     self.workdir.mkdir(parents=True, exist_ok=True)
     # The socket path must fit in sun_path, so the runtime directory stays short.
@@ -49,12 +49,20 @@ class Hyprland:
     os.chmod(self.run, 0o700)
     self.cache = self.workdir / 'cache'
     self.cache.mkdir(exist_ok=True)
+    # A home of its own too: anything a config or module writes (state files,
+    # caches) lands here, never in the real one.
+    self.home = self.workdir / 'home'
+    for sub in ('', '.config', '.local/state', '.local/share'):
+      (self.home / sub).mkdir(parents=True, exist_ok=True)
     self.config = self.workdir / 'hyprland.lua'
     self.config.write_text(config)
     real = os.environ.get('XDG_RUNTIME_DIR', '')
     assert str(self.run) != real
     self.env = {
-      'HOME': os.environ['HOME'],
+      'HOME': str(self.home),
+      'XDG_CONFIG_HOME': str(self.home / '.config'),
+      'XDG_STATE_HOME': str(self.home / '.local/state'),
+      'XDG_DATA_HOME': str(self.home / '.local/share'),
       'PATH': '/usr/bin',
       'XDG_RUNTIME_DIR': str(self.run),
       'XDG_CACHE_HOME': str(self.cache),
@@ -64,6 +72,7 @@ class Hyprland:
       'HYPRLAND_NO_SD_VARS': '1',
       'HYPRLAND_NO_CRASHREPORTER': '1',
       'LANG': 'C.UTF-8',
+      **(env or {}),
     }
     self.log = (self.workdir / log_name).open('w')
     # Capped like any heavy job on this machine; the compositor is the scope's

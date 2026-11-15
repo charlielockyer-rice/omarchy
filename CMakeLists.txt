@@ -15,6 +15,9 @@ set_target_properties(workspace-backgrounds PROPERTIES PREFIX "")
 # Hyprland exposes inline globals through its headers, so whole-library hidden
 # visibility breaks the host API. Our own symbols sit in an anonymous namespace.
 target_compile_options(workspace-backgrounds PRIVATE -fno-gnu-unique)
+# Every symbol bound when Hyprland loads the plugin, so a missing one makes the
+# load fail instead of killing the compositor the first time it is called.
+target_link_options(workspace-backgrounds PRIVATE -Wl,-z,now)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(deps REQUIRED IMPORTED_TARGET
@@ -30,4 +33,11 @@ pkg_check_modules(deps REQUIRED IMPORTED_TARGET
 )
 target_link_libraries(workspace-backgrounds PRIVATE PkgConfig::deps)
 
+# The image helper: every decoder runs in this process, never in Hyprland.
+# Installed next to the plugin, which finds it there.
+add_executable(workspace-backgrounds-prepare prepare.cpp)
+pkg_check_modules(prepare_deps REQUIRED IMPORTED_TARGET hyprgraphics cairo libjxl)
+target_link_libraries(workspace-backgrounds-prepare PRIVATE PkgConfig::prepare_deps)
+
 install(TARGETS workspace-backgrounds LIBRARY DESTINATION lib/omarchy-hyprland-workspace-backgrounds)
+install(TARGETS workspace-backgrounds-prepare RUNTIME DESTINATION lib/omarchy-hyprland-workspace-backgrounds)
